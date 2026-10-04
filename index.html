@@ -127,6 +127,8 @@
     <label class="field" id="sheetRow" hidden>Sheet to fill
       <select id="sheetSel"></select>
     </label>
+    <p class="note links" id="autoMatch" hidden><span id="autoText"></span><button type="button" id="changeMatch">Change</button></p>
+    <div id="matchPick">
     <label class="field">Lookup column
       <span class="hint">The column in your file that holds the name or code to match. Headers are read from row 1.</span>
       <select id="lookupSel"></select>
@@ -135,6 +137,7 @@
       <span class="hint">The master column that holds the names or codes to look up. It is picked automatically when its header matches your lookup column's header.</span>
       <select id="masterKeySel"></select>
     </label>
+    </div>
     <fieldset>
       <legend>Fields to return</legend>
       <p class="links"><button type="button" id="selAll">Select all</button><button type="button" id="selNone">Clear</button></p>
@@ -181,6 +184,8 @@
 const CONFIG = {
   masterUrl: "master.xlsx",   // file sitting next to index.html in the repo
   masterSheet: "Master",      // sheet name; the first sheet is used if this isn't found
+  // Headings tried first, in this order, in both your file and the master (spaces/case ignored)
+  matchHeadings: ["WorkshopCode", "Workshop Code", "Share Code", "ShareCode", "Share ID"],
   keyColumn: null,            // master header to match on; null = first column
   altSeparator: /\s*[|\n]\s*/ // splits several names written in one master key cell
 };
@@ -198,6 +203,14 @@ function el(tag, attrs = {}, ...kids) {
 // lowercase, strip accents, "&" -> "and", drop punctuation, collapse spaces
 const norm = s => String(s ?? "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
   .replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim();
+const compact = s => norm(s).replace(/ /g, "");
+function findByHeading(headers) {
+  for (const want of CONFIG.matchHeadings) {
+    const i = headers.findIndex(h => h && compact(h) === compact(want));
+    if (i >= 0) return i;
+  }
+  return -1;
+}
 function similarity(a, b) {
   if (a === b) return 1;
   const m = a.length, n = b.length;
@@ -235,7 +248,8 @@ function parseMaster(buf) {
   master.headers = aoa[0].map(h => String(h).trim());
   master.rows = aoa.slice(1);
   $("#masterKeySel").replaceChildren();
-  const k = CONFIG.keyColumn ? master.headers.findIndex(h => norm(h) === norm(CONFIG.keyColumn)) : 0;
+  let k = findByHeading(master.headers);
+  if (k < 0 && CONFIG.keyColumn) k = master.headers.findIndex(h => norm(h) === norm(CONFIG.keyColumn));
   buildIndex(k < 0 ? 0 : k);
   if (up.wb) loadSheet();
 }
@@ -255,10 +269,10 @@ function buildIndex(k) {
   let msg = `Master data ready: ${master.rows.length} rows, matching on “${master.headers[master.keyIdx]}”`;
   if (master.altCount) msg += `, ${master.altCount} alternate spellings`;
   if (master.conflicts) msg += `. Warning: ${master.conflicts} names appear on more than one row and the first one is used`;
-  setStatus(msg + ".", master.conflicts ? "err" : "ok");
+  setStatus(msg + ".", "ok");
   show("#manualMaster", false);
 }
-function setStatus(t, cls) { const s = $("#masterStatus"); s.textContent = t; s.className = cls || ""; }
+function setStatus(t, cls) { const s = $("#masterStatus"); s.textContent = t; s.className = cls || ""; s.hidden = cls === "ok"; }
 
 $("#masterInput").addEventListener("change", e => {
   const f = e.target.files[0]; if (!f) return;
@@ -300,22 +314,35 @@ function loadSheet() {
 
   const lk = $("#lookupSel"); lk.replaceChildren();
   const keyN = norm(master.headers[master.keyIdx]);
-  let def = up.headers.findIndex(h => norm(h) === keyN); if (def < 0) def = 0;
+  let def = findByHeading(up.headers);
+  if (def < 0) def = up.headers.findIndex(h => norm(h) === keyN);
+  if (def < 0) def = 0;
   up.headers.forEach((h, c) => lk.append(el("option", { value: c }, h || "Column " + XLSX.utils.encode_col(up.range.s.c + c))));
   lk.value = def;
   syncMasterKey();
 }
-function syncMasterKey() {
+function syncMasterKey(userChange) {
   const sel = $("#masterKeySel");
   if (!sel.options.length) master.headers.forEach((h, f) => { if (h) sel.append(el("option", { value: f }, h)); });
-  const lh = norm(up.headers[+$("#lookupSel").value]);
-  const m = master.headers.findIndex(h => h && norm(h) === lh);
-  const k = m >= 0 ? m : master.keyIdx;
+  let k = userChange ? -1 : findByHeading(master.headers);
+  if (k < 0) {
+    const lh = compact(up.headers[+$("#lookupSel").value]);
+    k = master.headers.findIndex(h => h && compact(h) === lh);
+  }
+  if (k < 0) k = master.keyIdx;
   sel.value = k;
   if (k !== master.keyIdx) buildIndex(k);
   renderFields();
+  if (!userChange) updateAutoNote();
 }
-$("#lookupSel").addEventListener("change", syncMasterKey);
+function updateAutoNote() {
+  const auto = findByHeading(up.headers) >= 0 && findByHeading(master.headers) >= 0;
+  $("#matchPick").hidden = auto;
+  $("#autoMatch").hidden = !auto;
+  if (auto) $("#autoText").textContent = `Matching “${up.headers[+$("#lookupSel").value]}” in your file to “${master.headers[master.keyIdx]}” in the master. `;
+}
+$("#changeMatch").onclick = () => { $("#matchPick").hidden = false; $("#autoMatch").hidden = true; };
+$("#lookupSel").addEventListener("change", () => syncMasterKey(true));
 $("#masterKeySel").addEventListener("change", e => { buildIndex(+e.target.value); renderFields(); });
 
 function renderFields() {
@@ -388,7 +415,8 @@ function renderPlan() {
   $("#targetNote").textContent =
     (upd.length ? "Existing columns: " + upd.join(", ") + ". " : "") +
     (add.length ? "New columns added at the end: " + add.join(", ") + ". " : "") +
-    (plan.overwrite ? "Existing values will be replaced." : "Cells that already have a value are left alone.");
+    (plan.overwrite ? "Existing values will be replaced." : "Cells that already have a value are left alone.") +
+    (master.conflicts ? ` ${master.conflicts} master names appear on more than one row; the first row is used.` : "");
 
   const d = $("#details"); d.replaceChildren();
   const closeList = plan.uniques.filter(u => u.kind === "close");
