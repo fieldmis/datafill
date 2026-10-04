@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Master Data Fill</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg: #F2F5F3; --surface: #FFFFFF; --ink: #14201A; --muted: #55655B;
+    --line: #D3DCD6; --accent: #1B6B45; --accent-ink: #FFFFFF; --accent-soft: #E1F0E8;
+    --warn: #8A5200; --warn-soft: #FBEFD9; --bad: #A3321F; --bad-soft: #F8E3DF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101713; --surface: #18221C; --ink: #E7EEE9; --muted: #98A89E;
+      --line: #2B3A31; --accent: #4CBF84; --accent-ink: #08140D; --accent-soft: #1D3328;
+      --warn: #F0B35A; --warn-soft: #3A2C12; --bad: #F08B7A; --bad-soft: #3B1D18;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0; color: var(--ink); background: var(--bg);
+    font: 400 15px/1.5 "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; }
+  header { margin-bottom: 24px; }
+  h1 { font-size: 28px; line-height: 1.2; margin: 0 0 6px; font-weight: 700; letter-spacing: -0.01em; }
+  h2 { font-size: 17px; margin: 0 0 14px; font-weight: 600; }
+  .sub { margin: 0; color: var(--muted); max-width: 60ch; }
+  #masterStatus {
+    margin-top: 14px; padding: 8px 12px; border-radius: 6px; font-size: 13px;
+    background: var(--surface); border: 1px solid var(--line); color: var(--muted);
+  }
+  #masterStatus.ok { border-color: var(--accent); color: var(--ink); }
+  #masterStatus.err { border-color: var(--bad); color: var(--bad); background: var(--bad-soft); }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    padding: 20px; margin-bottom: 16px;
+  }
+  .panel[hidden] { display: none; }
+  .panel.done { opacity: .75; }
+
+  .drop {
+    display: block; padding: 28px 16px; text-align: center; cursor: pointer;
+    border: 2px dashed var(--line); border-radius: 8px; color: var(--muted);
+  }
+  .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
+  .drop strong { color: var(--ink); }
+  .drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .drop:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+  label.field { display: block; margin-bottom: 14px; font-weight: 500; }
+  label.field span.hint { font-weight: 400; color: var(--muted); font-size: 13px; display: block; }
+  select {
+    display: block; width: 100%; max-width: 420px; margin-top: 4px; padding: 8px 10px;
+    font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  }
+  fieldset { border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px 6px; margin: 0 0 14px; }
+  legend { font-weight: 500; padding: 0 6px; }
+  .check { display: flex; gap: 10px; align-items: baseline; padding: 5px 0; }
+  .check input { accent-color: var(--accent); }
+  .check small { color: var(--muted); }
+  .links { margin: 0 0 6px; font-size: 13px; }
+  .links button { all: unset; cursor: pointer; color: var(--accent); text-decoration: underline; margin-right: 12px; }
+  .links button:focus-visible { outline: 2px solid var(--accent); }
+
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+  button.btn {
+    font: inherit; font-weight: 600; padding: 9px 16px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
+  }
+  button.btn.ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+  button.btn:hover { filter: brightness(1.08); }
+  button.btn:disabled { opacity: .5; cursor: not-allowed; }
+  button.btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .stat { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+  .stat b { display: block; font-size: 24px; line-height: 1.2; }
+  .stat span { color: var(--muted); font-size: 13px; }
+  .stat.warn { background: var(--warn-soft); border-color: var(--warn); }
+  .stat.bad { background: var(--bad-soft); border-color: var(--bad); }
+  .stat.good { background: var(--accent-soft); border-color: var(--accent); }
+
+  .note { font-size: 13px; color: var(--muted); margin: 0 0 12px; }
+  details { margin-bottom: 12px; }
+  summary { cursor: pointer; font-weight: 500; }
+  .tablewrap { overflow-x: auto; margin-top: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; }
+  #msg { margin: 0 0 16px; padding: 10px 14px; border-radius: 6px; background: var(--bad-soft); color: var(--bad); border: 1px solid var(--bad); }
+  #msg[hidden] { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Master data fill</h1>
+    <p class="sub">Upload your sheet, choose the fields you want back, and they are filled in from the master list. Your file never leaves your browser.</p>
+    <div id="masterStatus">Loading master data…</div>
+  </header>
+
+  <p id="msg" role="alert" hidden></p>
+
+  <section class="panel" id="p1">
+    <h2>1. Upload your file</h2>
+    <label class="drop" id="drop">
+      <input type="file" id="fileInput" accept=".xlsx,.xlsm,.xlsb,.xls,.csv">
+      <strong>Choose an Excel file</strong> or drop it here<br>
+      <small>.xlsx, .xlsm, .xlsb, .xls or .csv</small>
+    </label>
+    <div id="manualMaster" hidden style="margin-top:14px">
+      <p class="note">The master file could not be loaded automatically (this happens when the page is opened straight from a folder). Pick it here instead.</p>
+      <input type="file" id="masterInput" accept=".xlsx,.xlsm,.xlsb,.xls">
+    </div>
+  </section>
+
+  <section class="panel" id="p2" hidden>
+    <h2>2. Choose what to fill</h2>
+    <label class="field" id="sheetRow" hidden>Sheet to fill
+      <select id="sheetSel"></select>
+    </label>
+    <label class="field">Lookup column
+      <span class="hint">The column in your file that holds the name or code to match. Headers are read from row 1.</span>
+      <select id="lookupSel"></select>
+    </label>
+    <fieldset>
+      <legend>Fields to return</legend>
+      <p class="links"><button type="button" id="selAll">Select all</button><button type="button" id="selNone">Clear</button></p>
+      <div id="fieldList"></div>
+    </fieldset>
+    <label class="check"><input type="checkbox" id="overwrite"> <span>Replace values that are already in my file <small>(otherwise only empty cells are filled)</small></span></label>
+    <label class="field" style="margin-top:12px">Close matches
+      <span class="hint">Catches spellings the master list doesn't know yet. Every close match is shown for review before anything is filled.</span>
+      <select id="fuzzySel">
+        <option value="0">Off, exact and listed alternates only</option>
+        <option value="0.92" selected>Strict, 92% similar or more</option>
+        <option value="0.85">Loose, 85% similar or more</option>
+      </select>
+    </label>
+    <div class="row">
+      <button class="btn" id="reviewBtn">Review matches</button>
+    </div>
+  </section>
+
+  <section class="panel" id="p3" hidden>
+    <h2>3. Confirm</h2>
+    <div class="stats" id="stats"></div>
+    <p class="note" id="targetNote"></p>
+    <div id="details"></div>
+    <div class="row">
+      <button class="btn" id="confirmBtn">Confirm and fill</button>
+      <button class="btn ghost" id="backBtn">Back</button>
+    </div>
+  </section>
+
+  <section class="panel" id="p4" hidden>
+    <h2>4. Download</h2>
+    <p id="result"></p>
+    <p class="note">The file downloads as .xlsx. Cell colours and other styling from the original are not carried over.</p>
+    <div class="row">
+      <button class="btn" id="downloadBtn">Download updated file</button>
+      <button class="btn ghost" id="restartBtn">Fill another file</button>
+    </div>
+  </section>
+</div>
+
+<script>
+/* ---------- Settings: edit these to match your master file ---------- */
+const CONFIG = {
+  masterUrl: "master.xlsx",   // file sitting next to index.html in the repo
+  masterSheet: "Master",      // sheet name; the first sheet is used if this isn't found
+  keyColumn: null,            // master header to match on; null = first column
+  altSeparator: /\s*[|\n]\s*/ // splits several names written in one master key cell
+};
+
+/* ---------- Helpers ---------- */
+const $ = s => document.querySelector(s);
+const show = (id, on = true) => { $(id).hidden = !on; };
+function flash(text) { const m = $("#msg"); m.textContent = text; m.hidden = !text; if (text) m.scrollIntoView({ block: "nearest" }); }
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) { if (k === "class") e.className = v; else e.setAttribute(k, v); }
+  for (const k of kids) e.append(k instanceof Node ? k : document.createTextNode(k));
+  return e;
+}
+// lowercase, strip accents, "&" -> "and", drop punctuation, collapse spaces
+const norm = s => String(s ?? "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+  .replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim();
+function similarity(a, b) {
+  if (a === b) return 1;
+  const m = a.length, n = b.length;
+  if (!m || !n) return 0;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++)
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return 1 - prev[n] / Math.max(m, n);
+}
+const isBlank = v => v === "" || v === null || v === undefined;
+
+/* ---------- Master data ---------- */
+const master = { headers: [], rows: [], keyIdx: 0, index: new Map(), altCount: 0, conflicts: 0 };
+
+async function loadMaster() {
+  try {
+    const r = await fetch(CONFIG.masterUrl + "?t=" + Date.now());
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    parseMaster(await r.arrayBuffer());
+  } catch (e) {
+    setStatus("Master data not loaded (" + e.message + ").", "err");
+    show("#manualMaster");
+  }
+}
+function parseMaster(buf) {
+  const wb = XLSX.read(buf, { type: "array", cellDates: true });
+  const want = CONFIG.masterSheet.toLowerCase();
+  const name = wb.SheetNames.find(n => n.toLowerCase() === want) ?? wb.SheetNames[0];
+  const aoa = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: "", raw: true, blankrows: false });
+  if (aoa.length < 2) { setStatus("The master sheet is empty.", "err"); return; }
+  master.headers = aoa[0].map(h => String(h).trim());
+  master.keyIdx = CONFIG.keyColumn ? master.headers.findIndex(h => norm(h) === norm(CONFIG.keyColumn)) : 0;
+  if (master.keyIdx < 0) { setStatus("Key column '" + CONFIG.keyColumn + "' not found in the master sheet.", "err"); return; }
+  master.rows = aoa.slice(1);
+  master.index = new Map(); master.altCount = 0; master.conflicts = 0;
+  master.rows.forEach((row, ri) => {
+    String(row[master.keyIdx]).split(CONFIG.altSeparator).map(s => s.trim()).filter(Boolean).forEach((text, k) => {
+      const n = norm(text);
+      if (!n) return;
+      const hit = master.index.get(n);
+      if (hit && hit.ri !== ri) { master.conflicts++; return; }
+      if (!hit) master.index.set(n, { ri, text });
+      if (k > 0) master.altCount++;
+    });
+  });
+  let msg = `Master data ready: ${master.rows.length} rows, matching on “${master.headers[master.keyIdx]}”`;
+  if (master.altCount) msg += `, ${master.altCount} alternate spellings`;
+  if (master.conflicts) msg += `. Warning: ${master.conflicts} names appear on more than one row and the first one is used`;
+  setStatus(msg + ".", master.conflicts ? "err" : "ok");
+  show("#manualMaster", false);
+}
+function setStatus(t, cls) { const s = $("#masterStatus"); s.textContent = t; s.className = cls || ""; }
+
+$("#masterInput").addEventListener("change", e => {
+  const f = e.target.files[0]; if (!f) return;
+  f.arrayBuffer().then(parseMaster).catch(err => setStatus("Could not read that file: " + err.message, "err"));
+});
+
+/* ---------- Step 1: upload ---------- */
+const up = {};
+const drop = $("#drop");
+$("#fileInput").addEventListener("change", e => e.target.files[0] && handleFile(e.target.files[0]));
+["dragenter", "dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => e.dataTransfer.files[0] && handleFile(e.dataTransfer.files[0]));
+
+function handleFile(file) {
+  flash("");
+  if (!master.rows.length) { flash("The master data isn't loaded yet, so there is nothing to fill from."); return; }
+  file.arrayBuffer().then(buf => {
+    up.wb = XLSX.read(buf, { type: "array", cellDates: true });
+    up.name = file.name.replace(/\.[^.]+$/, "");
+    const sel = $("#sheetSel"); sel.replaceChildren();
+    up.wb.SheetNames.forEach(n => sel.append(el("option", { value: n }, n)));
+    show("#sheetRow", up.wb.SheetNames.length > 1);
+    loadSheet();
+    $("#p1").classList.add("done");
+    show("#p2"); show("#p3", false); show("#p4", false);
+    $("#p2").scrollIntoView({ behavior: "smooth", block: "start" });
+  }).catch(err => flash("Could not read that file: " + err.message));
+}
+$("#sheetSel").addEventListener("change", loadSheet);
+
+/* ---------- Step 2: choose ---------- */
+function loadSheet() {
+  up.ws = up.wb.Sheets[$("#sheetSel").value];
+  up.range = XLSX.utils.decode_range(up.ws["!ref"] || "A1");
+  up.width = up.range.e.c - up.range.s.c + 1;
+  up.aoa = XLSX.utils.sheet_to_json(up.ws, { header: 1, defval: "", raw: true, blankrows: true });
+  up.headers = Array.from({ length: up.width }, (_, c) => String(up.aoa[0]?.[c] ?? "").trim());
+
+  const lk = $("#lookupSel"); lk.replaceChildren();
+  const keyN = norm(master.headers[master.keyIdx]);
+  let def = up.headers.findIndex(h => norm(h) === keyN); if (def < 0) def = 0;
+  up.headers.forEach((h, c) => lk.append(el("option", { value: c }, h || "Column " + XLSX.utils.encode_col(up.range.s.c + c))));
+  lk.value = def;
+
+  const list = $("#fieldList"); list.replaceChildren();
+  master.headers.forEach((h, f) => {
+    if (f === master.keyIdx || !h) return;
+    const exists = up.headers.some(x => norm(x) === norm(h));
+    const cb = el("input", { type: "checkbox", value: f });
+    list.append(el("label", { class: "check" }, cb, el("span", {}, h + " ", el("small", {}, exists ? "updates your existing column" : "added as a new column"))));
+  });
+}
+const boxes = () => [...document.querySelectorAll("#fieldList input")];
+$("#selAll").onclick = () => boxes().forEach(b => b.checked = true);
+$("#selNone").onclick = () => boxes().forEach(b => b.checked = false);
+
+/* ---------- Step 3: review ---------- */
+let plan = null;
+$("#reviewBtn").onclick = () => {
+  flash("");
+  const fields = boxes().filter(b => b.checked).map(b => +b.value);
+  if (!fields.length) { flash("Select at least one field to return."); return; }
+  plan = buildPlan(fields);
+  renderPlan();
+  show("#p3"); $("#p2").classList.add("done");
+  $("#p3").scrollIntoView({ behavior: "smooth", block: "start" });
+};
+$("#backBtn").onclick = () => { show("#p3", false); $("#p2").classList.remove("done"); };
+
+function buildPlan(fields) {
+  const lc = +$("#lookupSel").value, thr = +$("#fuzzySel").value;
+  const cache = new Map(), rows = [];
+  for (let i = 1; i < up.aoa.length; i++) {
+    const raw = up.aoa[i][lc];
+    if (isBlank(raw)) continue;
+    const n = norm(raw);
+    if (!n) continue;
+    let res = cache.get(n);
+    if (!res) { res = resolve(n, thr); res.raw = String(raw).trim(); res.count = 0; cache.set(n, res); }
+    res.count++;
+    rows.push({ i, res });
+  }
+  return { fields, rows, uniques: [...cache.values()], overwrite: $("#overwrite").checked };
+}
+function resolve(n, thr) {
+  const hit = master.index.get(n);
+  if (hit) return { kind: "exact", ri: hit.ri };
+  if (thr > 0) {
+    let best = null, bestScore = 0;
+    for (const [key, v] of master.index) {
+      if (Math.abs(key.length - n.length) / Math.max(key.length, n.length) > 1 - thr) continue;
+      const s = similarity(n, key);
+      if (s > bestScore) { bestScore = s; best = v; }
+    }
+    if (best && bestScore >= thr) return { kind: "close", ri: best.ri, to: best.text, score: bestScore };
+  }
+  return { kind: "none" };
+}
+function renderPlan() {
+  const count = k => plan.rows.filter(r => r.res.kind === k).length;
+  const exact = count("exact"), close = count("close"), none = count("none");
+  const stats = $("#stats"); stats.replaceChildren();
+  const stat = (n, label, cls = "") => stats.append(el("div", { class: "stat " + cls }, el("b", {}, String(n)), el("span", {}, label)));
+  stat(plan.rows.length, "rows with a lookup value");
+  stat(exact, "matched", "good");
+  stat(close, "close matches", close ? "warn" : "");
+  stat(none, "not found", none ? "bad" : "");
+
+  const upd = [], add = [];
+  plan.fields.forEach(f => (up.headers.some(x => norm(x) === norm(master.headers[f])) ? upd : add).push(master.headers[f]));
+  $("#targetNote").textContent =
+    (upd.length ? "Existing columns: " + upd.join(", ") + ". " : "") +
+    (add.length ? "New columns added at the end: " + add.join(", ") + ". " : "") +
+    (plan.overwrite ? "Existing values will be replaced." : "Cells that already have a value are left alone.");
+
+  const d = $("#details"); d.replaceChildren();
+  const closeList = plan.uniques.filter(u => u.kind === "close");
+  const noneList = plan.uniques.filter(u => u.kind === "none");
+  if (closeList.length) d.append(detailTable(`Close matches to check (${closeList.length})`, ["In your file", "Matched to", "Similarity"],
+    closeList.map(u => [u.raw, u.to, Math.round(u.score * 100) + "%"]), true));
+  if (noneList.length) d.append(detailTable(`Not found, these rows stay as they are (${noneList.length})`, ["In your file", "Rows"],
+    noneList.map(u => [u.raw, u.count]), !closeList.length));
+}
+function detailTable(title, heads, data, open) {
+  const t = el("table", {}, el("thead", {}, el("tr", {}, ...heads.map(h => el("th", {}, h)))));
+  const tb = el("tbody");
+  data.slice(0, 100).forEach(r => tb.append(el("tr", {}, ...r.map(c => el("td", {}, String(c))))));
+  t.append(tb);
+  const det = el("details", open ? { open: "" } : {}, el("summary", {}, title), el("div", { class: "tablewrap" }, t));
+  if (data.length > 100) det.append(el("p", { class: "note" }, `Showing the first 100 of ${data.length}.`));
+  return det;
+}
+
+/* ---------- Fill ---------- */
+$("#confirmBtn").onclick = () => {
+  $("#confirmBtn").disabled = true;
+  const ws = up.ws, r0 = up.range.s.r, c0 = up.range.s.c;
+  let nextCol = up.width, filled = 0, kept = 0, rowsTouched = new Set();
+
+  const targets = plan.fields.map(f => {
+    let c = up.headers.findIndex(x => norm(x) === norm(master.headers[f]));
+    if (c < 0) { c = nextCol++; setCell(ws, r0, c0 + c, master.headers[f]); }
+    return { f, c };
+  });
+  for (const { i, res } of plan.rows) {
+    if (res.kind === "none") continue;
+    const src = master.rows[res.ri];
+    for (const t of targets) {
+      const v = src[t.f];
+      if (isBlank(v)) continue;
+      const cur = up.aoa[i][t.c];
+      if (!isBlank(cur) && !plan.overwrite) { kept++; continue; }
+      setCell(ws, r0 + i, c0 + t.c, v);
+      filled++; rowsTouched.add(i);
+    }
+  }
+  up.range.e.c = Math.max(up.range.e.c, c0 + nextCol - 1);
+  ws["!ref"] = XLSX.utils.encode_range(up.range);
+
+  $("#result").textContent = `Filled ${filled} cells across ${rowsTouched.size} rows.` +
+    (kept ? ` ${kept} cells already had a value and were left as they were.` : "");
+  show("#p4"); $("#p3").classList.add("done");
+  $("#p4").scrollIntoView({ behavior: "smooth", block: "start" });
+};
+function setCell(ws, r, c, v) {
+  const a = XLSX.utils.encode_cell({ r, c });
+  if (v instanceof Date) ws[a] = { t: "d", v, z: "dd-mmm-yyyy" };
+  else if (typeof v === "number") ws[a] = { t: "n", v };
+  else if (typeof v === "boolean") ws[a] = { t: "b", v };
+  else ws[a] = { t: "s", v: String(v) };
+}
+
+/* ---------- Download / restart ---------- */
+$("#downloadBtn").onclick = () => XLSX.writeFile(up.wb, up.name + "_filled.xlsx", { bookType: "xlsx", cellDates: true });
+$("#restartBtn").onclick = () => {
+  $("#fileInput").value = ""; $("#confirmBtn").disabled = false;
+  ["#p2", "#p3", "#p4"].forEach(p => show(p, false));
+  $("#p1").classList.remove("done"); $("#p2").classList.remove("done"); $("#p3").classList.remove("done");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+};
+
+loadMaster();
+</script>
+</body>
+</html>
