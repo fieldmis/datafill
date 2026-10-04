@@ -131,6 +131,10 @@
       <span class="hint">The column in your file that holds the name or code to match. Headers are read from row 1.</span>
       <select id="lookupSel"></select>
     </label>
+    <label class="field">Match against master column
+      <span class="hint">The master column that holds the names or codes to look up. It is picked automatically when its header matches your lookup column's header.</span>
+      <select id="masterKeySel"></select>
+    </label>
     <fieldset>
       <legend>Fields to return</legend>
       <p class="links"><button type="button" id="selAll">Select all</button><button type="button" id="selNone">Clear</button></p>
@@ -229,9 +233,14 @@ function parseMaster(buf) {
   const aoa = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: "", raw: true, blankrows: false });
   if (aoa.length < 2) { setStatus("The master sheet is empty.", "err"); return; }
   master.headers = aoa[0].map(h => String(h).trim());
-  master.keyIdx = CONFIG.keyColumn ? master.headers.findIndex(h => norm(h) === norm(CONFIG.keyColumn)) : 0;
-  if (master.keyIdx < 0) { setStatus("Key column '" + CONFIG.keyColumn + "' not found in the master sheet.", "err"); return; }
   master.rows = aoa.slice(1);
+  $("#masterKeySel").replaceChildren();
+  const k = CONFIG.keyColumn ? master.headers.findIndex(h => norm(h) === norm(CONFIG.keyColumn)) : 0;
+  buildIndex(k < 0 ? 0 : k);
+  if (up.wb) loadSheet();
+}
+function buildIndex(k) {
+  master.keyIdx = k;
   master.index = new Map(); master.altCount = 0; master.conflicts = 0;
   master.rows.forEach((row, ri) => {
     String(row[master.keyIdx]).split(CONFIG.altSeparator).map(s => s.trim()).filter(Boolean).forEach((text, k) => {
@@ -294,7 +303,22 @@ function loadSheet() {
   let def = up.headers.findIndex(h => norm(h) === keyN); if (def < 0) def = 0;
   up.headers.forEach((h, c) => lk.append(el("option", { value: c }, h || "Column " + XLSX.utils.encode_col(up.range.s.c + c))));
   lk.value = def;
+  syncMasterKey();
+}
+function syncMasterKey() {
+  const sel = $("#masterKeySel");
+  if (!sel.options.length) master.headers.forEach((h, f) => { if (h) sel.append(el("option", { value: f }, h)); });
+  const lh = norm(up.headers[+$("#lookupSel").value]);
+  const m = master.headers.findIndex(h => h && norm(h) === lh);
+  const k = m >= 0 ? m : master.keyIdx;
+  sel.value = k;
+  if (k !== master.keyIdx) buildIndex(k);
+  renderFields();
+}
+$("#lookupSel").addEventListener("change", syncMasterKey);
+$("#masterKeySel").addEventListener("change", e => { buildIndex(+e.target.value); renderFields(); });
 
+function renderFields() {
   const list = $("#fieldList"); list.replaceChildren();
   master.headers.forEach((h, f) => {
     if (f === master.keyIdx || !h) return;
